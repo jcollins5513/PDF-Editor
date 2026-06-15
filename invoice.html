@@ -165,6 +165,8 @@
     .col-del,.del-btn{visibility:hidden;}
     .add-row-wrap{display:none !important;}
     .ql-modal{display:none !important;}
+    .item-dd{display:none !important;}
+    #itemMenu{display:none !important;}
     .rownum{background:#fff;}
     thead.run-head{display:table-header-group;}
     tfoot.run-foot{display:table-footer-group;}
@@ -190,6 +192,23 @@
     border-top-right-radius:6px;border-bottom-right-radius:6px;
   }
   .ql-del:hover{background:#7a3a3a;}
+  /* item cell ▾ picker */
+  .item-wrap{position:relative;display:flex;align-items:stretch;}
+  .item-wrap input{flex:1;width:auto;}
+  .item-dd{
+    border:0;background:transparent;cursor:pointer;color:var(--muted);
+    font-size:10px;padding:0 4px;
+  }
+  .item-dd:hover{background:#eaf2ff;color:var(--accent);}
+  #itemMenu{
+    position:absolute;z-index:60;background:#fff;border:1px solid #bbb;border-radius:6px;
+    box-shadow:0 6px 24px rgba(0,0,0,.18);max-height:260px;overflow:auto;min-width:160px;
+  }
+  #itemMenu button{
+    display:block;width:100%;text-align:left;border:0;background:#fff;cursor:pointer;
+    padding:7px 12px;font:inherit;font-size:12px;color:#111;white-space:nowrap;
+  }
+  #itemMenu button:hover{background:#eaf2ff;}
   /* add-quick-link dialog */
   .ql-modal{
     position:fixed;inset:0;background:rgba(0,0,0,.5);
@@ -292,6 +311,9 @@
 <datalist id="dl-descr"></datalist>
 <datalist id="dl-amount"></datalist>
 
+<!-- full item picker, opened by the ▾ button on each Item cell -->
+<div id="itemMenu" style="display:none"></div>
+
 <div class="sheet">
  <table class="layout">
 
@@ -393,11 +415,14 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 /* ---------- column dropdown choices ---------- */
 // the built-in items match the toolbar quick buttons; custom ones come from itemLinks
 const BASE_ITEMS = [
-  {label:'NEW CAR PCK, CLEAN', amount:'105.00'},
-  {label:'NEW CAR PCK',        amount:'75.00'},
-  {label:'CLEAN FOR DELIVERY', amount:'30.00'},
-  {label:'DETAIL',             amount:'125.00'},
-  {label:'BUFF & POLISH',      amount:''}
+  {label:'DETAIL',           amount:''},
+  {label:'SEAT CLEAN',       amount:''},
+  {label:'FRESHEN UP',       amount:''},
+  {label:'BUFF & POLISH',    amount:''},
+  {label:'SERVICE WASH',     amount:''},
+  {label:'NEW CAR CLEAN',    amount:''},
+  {label:'PAINT PROTECTION', amount:''},
+  {label:'WAX',              amount:''}
 ];
 function allItems(){
   return BASE_ITEMS.concat((typeof itemLinks!=='undefined'?itemLinks:[]).map(q=>({label:q.label, amount:q.amount||''})));
@@ -413,6 +438,39 @@ function fillDatalist(id, values){
   values.forEach(v=>{ if(v){ const o=document.createElement('option'); o.value=v; dl.appendChild(o); } });
 }
 function updateItemDatalist(){ fillDatalist('dl-item', allItems().map(x=>x.label)); }
+
+/* the ▾ button shows the FULL item list (a datalist would filter to the current text) */
+function openItemMenu(tr){
+  const input = tr.querySelector('.item input');
+  const menu = document.getElementById('itemMenu');
+  if(!input || !menu) return;
+  activeRow = tr;
+  menu.innerHTML='';
+  allItems().forEach(it=>{
+    const b=document.createElement('button');
+    b.type='button';
+    b.textContent = it.label + (it.amount ? '   $'+it.amount : '');
+    b.addEventListener('click', e=>{ e.stopPropagation(); chooseItem(tr, it.label, it.amount||''); closeItemMenu(); });
+    menu.appendChild(b);
+  });
+  const r = input.getBoundingClientRect();
+  menu.style.display='block';
+  menu.style.left = (window.scrollX + r.left) + 'px';
+  menu.style.top  = (window.scrollY + r.bottom + 2) + 'px';
+  menu.style.minWidth = r.width + 'px';
+}
+function closeItemMenu(){ const m=document.getElementById('itemMenu'); if(m) m.style.display='none'; }
+function chooseItem(tr, label, amount){
+  tr.querySelector('.item input').value = label;
+  const amtEl = tr.querySelector('.amt');
+  if(amount && !amtEl.value.trim()){
+    amtEl.value = amount;
+    const descr = tr.querySelector('.descr input');
+    if(!descr.value.trim()) descr.value = amount;
+  }
+  activeRow = tr;
+  recalc(); save();
+}
 
 // the other columns "learn" the values you type — cached locally, synced across desktops
 const COLMEM_KEY = 'wt_colmem';
@@ -491,7 +549,7 @@ function addRow(item='', amount='', serviced='', vin='', descr='', stock='', tic
     <td class="ticket cell"><input list="dl-ticket" value="${esc(ticket)}"></td>
     <td class="stock cell"><input list="dl-stock" value="${esc(stock)}"></td>
     <td class="vin cell"><input list="dl-vin" value="${esc(vin)}"></td>
-    <td class="item cell"><input list="dl-item" value="${esc(item)}"></td>
+    <td class="item cell"><div class="item-wrap"><input list="dl-item" value="${esc(item)}"><button class="item-dd" type="button" title="Choose from all items">▾</button></div></td>
     <td class="descr cell"><input list="dl-descr" value="${esc(descr)}"></td>
     <td class="amount cell"><input class="amt" list="dl-amount" value="${esc(amount)}" inputmode="decimal"></td>
     <td class="col-del"><div class="row-tools">
@@ -520,6 +578,7 @@ function addRow(item='', amount='', serviced='', vin='', descr='', stock='', tic
     el.addEventListener('input', ()=>{ recalc(); save(); });
     el.addEventListener('change', ()=> rememberValue(col, el.value));
   });
+  tr.querySelector('.item-dd').addEventListener('click', e=>{ e.stopPropagation(); openItemMenu(tr); });
   // picking an item from its dropdown auto-fills the amount (and mirrors to description)
   cells.item.addEventListener('change', ()=>{
     const amt = itemAmountFor(cells.item.value);
@@ -642,6 +701,9 @@ function load(){
   const markActive = e=>{ const tr=e.target.closest('tr'); if(tr && tr.parentNode===rowsTb) activeRow=tr; };
   rowsTb.addEventListener('focusin', markActive);
   rowsTb.addEventListener('click', e=>{ if(e.target.closest('.row-tools')) return; markActive(e); });
+
+  // any click outside the item picker closes it
+  document.addEventListener('click', e=>{ if(!e.target.closest('#itemMenu')) closeItemMenu(); });
 }
 
 /* ---------- per-invoice files on the local machine ---------- */
