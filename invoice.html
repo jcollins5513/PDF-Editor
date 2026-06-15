@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>W &amp; T Detail — Invoice Editor</title>
+<style>
+  :root{
+    --ink:#111;
+    --line:#000;
+    --muted:#555;
+    --accent:#1769d6;
+    --bg:#eceef1;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:"Helvetica Neue",Arial,sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    -webkit-print-color-adjust:exact;
+    print-color-adjust:exact;
+  }
+
+  /* ---------- Toolbar (screen only) ---------- */
+  .toolbar{
+    position:sticky;top:0;z-index:10;
+    background:#1b1f24;color:#fff;
+    padding:10px 16px;
+    display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+    box-shadow:0 2px 6px rgba(0,0,0,.25);
+  }
+  .toolbar .spacer{flex:1;}
+  .toolbar button{
+    font-size:13px;font-weight:600;
+    border:0;border-radius:6px;padding:8px 14px;cursor:pointer;
+    background:#33383f;color:#fff;
+  }
+  .toolbar button:hover{background:#444a52;}
+  .toolbar button.primary{background:var(--accent);}
+  .toolbar button.primary:hover{background:#1f7af0;}
+  .toolbar .num{
+    font-size:13px;color:#c9ccd1;display:flex;align-items:center;gap:6px;
+  }
+  .toolbar .num strong{color:#fff;font-size:15px;}
+  .hint{font-size:12px;color:#9aa0a6;width:100%;}
+
+  /* ---------- Page / sheet ---------- */
+  .sheet{
+    background:#fff;
+    width:8.5in;
+    min-height:11in;
+    margin:24px auto;
+    padding:0.55in 0.6in 0.5in;
+    box-shadow:0 4px 20px rgba(0,0,0,.18);
+    position:relative;
+  }
+  /* layout table drives the repeating header / footer on every printed page */
+  table.layout{width:100%;border-collapse:collapse;}
+  table.layout > thead > tr > td,
+  table.layout > tbody > tr > td,
+  table.layout > tfoot > tr > td{padding:0;}
+
+  /* editable fields look invisible until focused */
+  [contenteditable], .cell input, .cell textarea{outline:none;}
+  [contenteditable]:hover, .cell input:hover, .cell textarea:hover{background:#f3f8ff;}
+  [contenteditable]:focus, .cell input:focus, .cell textarea:focus{
+    background:#eaf2ff;box-shadow:inset 0 0 0 1px var(--accent);
+  }
+
+  /* ---------- Header ---------- */
+  .top{display:flex;justify-content:space-between;align-items:flex-start;}
+  .company .name{font-weight:700;font-size:15px;letter-spacing:.3px;}
+  .company div{font-size:12px;line-height:1.45;}
+  .title-block{text-align:right;}
+  .title-block h1{margin:0 0 6px;font-size:34px;font-weight:800;letter-spacing:1px;}
+  .meta{display:flex;gap:0;justify-content:flex-end;}
+  .meta .box{border:1px solid var(--line);min-width:92px;}
+  .meta .box + .box{border-left:0;}
+  .meta .box .lbl{
+    font-size:10px;text-align:center;padding:2px 6px;border-bottom:1px solid var(--line);
+    background:#f5f5f5;
+  }
+  .meta .box .val{font-size:12px;text-align:center;padding:4px 6px;min-height:22px;}
+  .contact{margin-top:10px;font-size:11px;display:flex;gap:22px;}
+
+  /* ---------- Bill To ---------- */
+  .billto{margin-top:14px;padding-bottom:10px;}
+  .billto .lbl{
+    font-size:11px;font-weight:700;border:1px solid var(--line);
+    background:#f5f5f5;display:inline-block;padding:2px 10px;
+  }
+  .billto .body{
+    border:1px solid var(--line);border-top:0;
+    padding:6px 10px;font-size:12px;line-height:1.5;width:280px;min-height:54px;
+    white-space:pre-wrap;
+  }
+
+  /* ---------- Items table ---------- */
+  table.items{
+    width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed;
+  }
+  table.items th{
+    border:1px solid var(--line);background:#f5f5f5;
+    font-size:11px;font-weight:700;text-align:left;padding:4px 6px;
+  }
+  table.items td{border:1px solid var(--line);padding:0;vertical-align:top;}
+  table.items tr.item-row{break-inside:avoid;page-break-inside:avoid;}
+  .cell input, .cell textarea{
+    width:100%;border:0;background:transparent;font:inherit;
+    padding:3px 6px;resize:none;color:var(--ink);
+  }
+  .cell textarea{overflow:hidden;line-height:1.3;min-height:22px;}
+  td.amount input{text-align:right;}
+  col.c-num{width:26px;}
+  col.c-serviced{width:72px;}
+  col.c-ticket{width:74px;}
+  col.c-stock{width:78px;}
+  col.c-vin{width:128px;}
+  col.c-item{width:auto;}
+  col.c-descr{width:66px;}
+  col.c-amount{width:68px;}
+  col.c-del{width:24px;}
+  .rownum{text-align:center;color:var(--muted);font-size:10px;padding:4px 2px;background:#fafafa;}
+  .del-btn{
+    border:0;background:transparent;color:#c0392b;cursor:pointer;
+    font-size:14px;width:100%;height:100%;padding:4px 0;
+  }
+  .del-btn:hover{background:#fdecea;}
+
+  .add-row-wrap{margin-top:8px;}
+  .add-row{
+    border:1px dashed #9aa0a6;background:#fff;color:#333;
+    border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;
+  }
+  .add-row:hover{background:#f3f8ff;border-color:var(--accent);color:var(--accent);}
+
+  /* ---------- Totals ---------- */
+  .totals{margin-top:14px;display:flex;justify-content:flex-end;break-inside:avoid;}
+  .totals .grid{width:300px;}
+  .totals .row{
+    display:flex;justify-content:space-between;align-items:center;
+    border:1px solid var(--line);padding:5px 10px;font-size:13px;
+  }
+  .totals .row + .row{border-top:0;}
+  .totals .row.due{font-weight:800;background:#f5f5f5;font-size:15px;}
+  .totals .row .v{font-variant-numeric:tabular-nums;}
+
+  .run-foot .footer{
+    padding-top:16px;display:flex;justify-content:space-between;
+    align-items:flex-end;font-size:11px;color:var(--muted);
+  }
+  .run-foot .thanks{font-style:italic;}
+
+  /* ---------- Print ---------- */
+  @media print{
+    @page{size:letter;margin:0.5in 0.55in;}
+    body{background:#fff;}
+    .toolbar{display:none !important;}
+    .sheet{box-shadow:none;margin:0;width:auto;min-height:auto;padding:0;}
+    .col-del,.del-btn{visibility:hidden;}
+    .add-row-wrap{display:none !important;}
+    .rownum{background:#fff;}
+    thead.run-head{display:table-header-group;}
+    tfoot.run-foot{display:table-footer-group;}
+    [contenteditable]:hover,.cell input:hover,.cell textarea:hover,
+    [contenteditable]:focus,.cell input:focus,.cell textarea:focus{
+      background:transparent;box-shadow:none;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="num">Invoice&nbsp;# <strong id="tbNum">—</strong></div>
+  <button onclick="addRow()">＋ Add Row</button>
+  <button onclick="addRow('NEW CAR PCK, CLEAN','105.00')">+ New Car Pck, Clean</button>
+  <button onclick="addRow('NEW CAR PCK','75.00')">+ New Car Pck</button>
+  <button onclick="addRow('CLEAN FOR DELIVERY','30.00')">+ Clean for Delivery</button>
+  <button onclick="addRow('DETAIL','125.00')">+ Detail</button>
+  <button onclick="addRow('BUFF &amp; POLISH')">+ Buff &amp; Polish</button>
+  <span style="width:1px;height:22px;background:#444a52;margin:0 4px"></span>
+  <button onclick="setBillTo('BENTLEY HYUNDAI\n3805 University Dr.\nHuntsville, AL. 35816')">🏢 Bentley Hyundai</button>
+  <button onclick="setBillTo('CREDIT NOW\n1220C N. Memorial Parkway\nHuntsville, AL. 35801')">🏢 Credit Now</button>
+  <div class="spacer"></div>
+  <button onclick="saveFile()">💾 Save to file</button>
+  <button onclick="document.getElementById('openInput').click()">📂 Open file</button>
+  <button onclick="newInvoice()">🗅 New Invoice (next #)</button>
+  <button class="primary" onclick="window.print()">🖶 Print / Save PDF</button>
+  <input type="file" id="openInput" accept=".json,application/json" style="display:none" onchange="openFile(this)">
+  <div class="hint">Click any field to edit. Amounts total automatically. Long invoices flow onto more pages with the header repeated. The current invoice is auto-saved in this browser; use Save to file to keep each invoice as its own file you can reopen later. The number advances only when you click New Invoice.</div>
+</div>
+
+<div class="sheet">
+ <table class="layout">
+
+  <!-- repeats at the top of every printed page -->
+  <thead class="run-head">
+   <tr><td>
+    <div class="top">
+      <div class="company">
+        <div class="name" contenteditable="true">W &amp; T Detail L.L.C.</div>
+        <div contenteditable="true">1006 Conception Ave.</div>
+        <div contenteditable="true">Huntsville, AL 35801</div>
+        <div class="contact">
+          <span>PHONE# <span contenteditable="true">256.533.0100</span></span>
+          <span>FAX# <span contenteditable="true">253.533.9008</span></span>
+        </div>
+      </div>
+      <div class="title-block">
+        <h1>Invoice</h1>
+        <div class="meta">
+          <div class="box"><div class="lbl">Date</div><div class="val" contenteditable="true" id="fDate"></div></div>
+          <div class="box"><div class="lbl">Invoice #</div><div class="val" id="fNum"></div></div>
+          <div class="box"><div class="lbl">Due Date</div><div class="val" contenteditable="true" id="fDue"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="billto">
+      <div class="lbl">Bill To</div>
+      <div class="body" contenteditable="true">BENTLEY HYUNDAI
+3805 University Dr.
+Huntsville, AL. 35816</div>
+    </div>
+   </td></tr>
+  </thead>
+
+  <!-- repeats at the bottom of every printed page -->
+  <tfoot class="run-foot">
+   <tr><td>
+    <div class="footer">
+      <div class="thanks">Thank you for your business</div>
+    </div>
+   </td></tr>
+  </tfoot>
+
+  <tbody>
+   <tr><td>
+    <table class="items">
+      <colgroup>
+        <col class="c-num"><col class="c-serviced"><col class="c-ticket"><col class="c-stock"><col class="c-vin">
+        <col class="c-item"><col class="c-descr"><col class="c-amount"><col class="c-del">
+      </colgroup>
+      <thead>
+        <tr>
+          <th class="rownum">#</th>
+          <th>Serviced</th>
+          <th>Ticket #</th>
+          <th>Stock #</th>
+          <th>Vin #</th>
+          <th>Item</th>
+          <th>Description</th>
+          <th style="text-align:right">Amount</th>
+          <th class="col-del"></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+
+    <div class="add-row-wrap">
+      <button class="add-row" onclick="addRow()">＋ Add Row</button>
+    </div>
+
+    <div class="totals">
+      <div class="grid">
+        <div class="row"><span>Total</span><span class="v" id="total">$0.00</span></div>
+        <div class="row due"><span>Balance Due</span><span class="v" id="due">$0.00</span></div>
+      </div>
+    </div>
+   </td></tr>
+  </tbody>
+
+ </table>
+</div>
+
+<script>
+const STORE_KEY = 'wt_invoice_state_v1';
+const NUM_KEY   = 'wt_invoice_next_number';
+const START_NUMBER = 21792; // next number after the sample (21791)
+
+/* ---------- helpers ---------- */
+function todayStr(){
+  const d = new Date();
+  return (d.getMonth()+1) + '/' + d.getDate() + '/' + d.getFullYear();
+}
+function money(n){
+  return '$' + (isNaN(n)?0:n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function autosize(ta){ ta.style.height='auto'; ta.style.height=ta.scrollHeight+'px'; }
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+/* ---------- rows ---------- */
+function addRow(item='', amount='', serviced='', vin='', descr='', stock='', ticket=''){
+  const tb = document.getElementById('rows');
+  const tr = document.createElement('tr');
+  tr.className='item-row';
+  if(!serviced) serviced = todayStr();
+  if(item && !descr) descr = amount; // mirror like the template
+  tr.innerHTML = `
+    <td class="rownum"></td>
+    <td class="serviced cell"><input value="${esc(serviced)}"></td>
+    <td class="ticket cell"><input value="${esc(ticket)}"></td>
+    <td class="stock cell"><input value="${esc(stock)}"></td>
+    <td class="vin cell"><textarea rows="1">${esc(vin)}</textarea></td>
+    <td class="item cell"><textarea rows="1">${esc(item)}</textarea></td>
+    <td class="descr cell"><input value="${esc(descr)}"></td>
+    <td class="amount cell"><input class="amt" value="${esc(amount)}" inputmode="decimal"></td>
+    <td class="col-del"><button class="del-btn" title="Delete row">✕</button></td>`;
+  tb.appendChild(tr);
+
+  tr.querySelector('.del-btn').addEventListener('click', ()=>{ tr.remove(); renumber(); recalc(); save(); });
+  tr.querySelectorAll('input,textarea').forEach(el=>{
+    el.addEventListener('input', ()=>{ if(el.tagName==='TEXTAREA') autosize(el); recalc(); save(); });
+  });
+  tr.querySelectorAll('textarea').forEach(autosize);
+  renumber(); recalc(); save();
+  return tr;
+}
+function renumber(){
+  document.querySelectorAll('#rows tr').forEach((tr,i)=>{ tr.querySelector('.rownum').textContent = i+1; });
+}
+function recalc(){
+  let total=0;
+  document.querySelectorAll('#rows .amt').forEach(inp=>{
+    const v = parseFloat(String(inp.value).replace(/[^0-9.\-]/g,''));
+    if(!isNaN(v)) total += v;
+  });
+  document.getElementById('total').textContent = money(total);
+  document.getElementById('due').textContent = money(total);
+}
+
+/* ---------- persistence ---------- */
+function collect(){
+  const rows=[];
+  document.querySelectorAll('#rows tr').forEach(tr=>{
+    rows.push({
+      serviced: tr.querySelector('.serviced input').value,
+      ticket:   tr.querySelector('.ticket input').value,
+      stock:    tr.querySelector('.stock input').value,
+      vin:      tr.querySelector('.vin textarea').value,
+      item:     tr.querySelector('.item textarea').value,
+      descr:    tr.querySelector('.descr input').value,
+      amount:   tr.querySelector('.amt').value
+    });
+  });
+  return {
+    company: document.querySelector('.company').innerHTML,
+    date: document.getElementById('fDate').textContent,
+    due:  document.getElementById('fDue').textContent,
+    num:  document.getElementById('fNum').textContent,
+    billto: document.querySelector('.billto .body').innerHTML,
+    rows
+  };
+}
+function save(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(collect())); }catch(e){} }
+
+/* apply a saved state object to the form (used by autosave-load and Open file) */
+function applyState(state, {fallbackNum=true}={}){
+  let num = state && state.num;
+  if(!num && fallbackNum){
+    num = localStorage.getItem(NUM_KEY) || String(START_NUMBER);
+    if(!localStorage.getItem(NUM_KEY)) localStorage.setItem(NUM_KEY, num);
+  }
+  if(num) setNumber(num);
+
+  document.getElementById('fDate').textContent = (state && state.date) || todayStr();
+  document.getElementById('fDue').textContent  = (state && state.due)  || todayStr();
+  document.querySelector('.company').innerHTML =
+     (state && state.company) || document.querySelector('.company').innerHTML;
+  document.querySelector('.billto .body').innerHTML =
+     (state && state.billto) || document.querySelector('.billto .body').innerHTML;
+
+  document.getElementById('rows').innerHTML='';
+  if(state && state.rows && state.rows.length){
+    state.rows.forEach(r=>addRow(r.item, r.amount, r.serviced, r.vin, r.descr, r.stock, r.ticket));
+  }else{
+    addRow('NEW CAR PCK, CLEAN','105.00');
+  }
+}
+
+function load(){
+  let state=null;
+  try{ state = JSON.parse(localStorage.getItem(STORE_KEY)); }catch(e){}
+  applyState(state);
+  ['fDate','fDue'].forEach(id=>document.getElementById(id).addEventListener('input', save));
+  document.querySelector('.company').addEventListener('input', save);
+  document.querySelector('.billto .body').addEventListener('input', save);
+}
+
+/* ---------- per-invoice files on the local machine ---------- */
+function saveFile(){
+  const state = collect();
+  const data = JSON.stringify(state, null, 2);
+  const blob = new Blob([data], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'invoice-' + (state.num || 'draft') + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+function openFile(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{
+      const state = JSON.parse(e.target.result);
+      applyState(state, {fallbackNum:false});
+      save(); // make the opened invoice the current auto-saved one
+    }catch(err){
+      alert('Could not read that file — it does not look like a saved invoice.');
+    }
+  };
+  reader.readAsText(file);
+  input.value=''; // allow reopening the same file again later
+}
+function setNumber(n){
+  document.getElementById('fNum').textContent = n;
+  document.getElementById('tbNum').textContent = n;
+}
+
+/* ---------- bill-to quick fill ---------- */
+function setBillTo(text){
+  const body = document.querySelector('.billto .body');
+  body.textContent = text;   // textContent keeps the line breaks as real newlines
+  save();
+}
+
+/* ---------- new invoice ---------- */
+function newInvoice(){
+  if(!confirm('Start a new invoice? The current one will be saved to a file first, then the number advances and the line items clear.')) return;
+  saveFile(); // auto-download the current invoice so it is never lost
+  const current = parseInt(document.getElementById('fNum').textContent,10);
+  const next = (isNaN(current)? START_NUMBER : current+1);
+  localStorage.setItem(NUM_KEY, String(next));
+  setNumber(String(next));
+  document.getElementById('rows').innerHTML='';
+  document.getElementById('fDate').textContent = todayStr();
+  document.getElementById('fDue').textContent  = todayStr();
+  addRow();
+  save();
+}
+
+/* default the Save-as-PDF filename to invoice-<number>.pdf */
+let _savedTitle = document.title;
+window.addEventListener('beforeprint', ()=>{
+  _savedTitle = document.title;
+  const num = document.getElementById('fNum').textContent.trim();
+  document.title = 'invoice-' + (num || 'draft');
+});
+window.addEventListener('afterprint', ()=>{ document.title = _savedTitle; });
+
+window.addEventListener('DOMContentLoaded', load);
+</script>
+</body>
+</html>
