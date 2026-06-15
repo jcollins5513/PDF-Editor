@@ -168,7 +168,20 @@
       background:transparent;box-shadow:none;
     }
   }
+  /* cloud sync UI */
+  .cloud-status{font-size:12px;padding:4px 8px;border-radius:6px;white-space:nowrap;}
+  .cloud-status.ok{color:#7ee08a;}
+  .cloud-status.off{color:#e6b06a;}
+  #cloudList{
+    font-size:13px;font-weight:600;padding:8px 8px;border-radius:6px;border:0;
+    background:#33383f;color:#fff;cursor:pointer;max-width:220px;
+  }
 </style>
+<!-- Firebase SDK (compat build works from a single static HTML file) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<!-- Your Firebase project keys live in this separate file -->
+<script src="firebase-config.js"></script>
 </head>
 <body>
 
@@ -184,12 +197,16 @@
   <button onclick="setBillTo('BENTLEY HYUNDAI\n3805 University Dr.\nHuntsville, AL. 35816')">🏢 Bentley Hyundai</button>
   <button onclick="setBillTo('CREDIT NOW\n1220C N. Memorial Parkway\nHuntsville, AL. 35801')">🏢 Credit Now</button>
   <div class="spacer"></div>
-  <button onclick="saveFile()">💾 Save to file</button>
+  <select id="cloudList" onchange="openCloudInvoice(this.value)" title="Open a saved invoice from the cloud">
+    <option value="">📋 Open saved invoice…</option>
+  </select>
+  <span id="cloudStatus" class="cloud-status off">● Local only</span>
+  <button onclick="saveFile()">💾 Save copy</button>
   <button onclick="document.getElementById('openInput').click()">📂 Open file</button>
   <button onclick="newInvoice()">🗅 New Invoice (next #)</button>
   <button class="primary" onclick="window.print()">🖶 Print / Save PDF</button>
   <input type="file" id="openInput" accept=".json,application/json" style="display:none" onchange="openFile(this)">
-  <div class="hint">Click any field to edit. Amounts total automatically. Long invoices flow onto more pages with the header repeated. The current invoice is auto-saved in this browser; use Save to file to keep each invoice as its own file you can reopen later. The number advances only when you click New Invoice.</div>
+  <div class="hint">Click any field to edit. Amounts total automatically. When cloud sync is on, every invoice and the next number are shared live across all desktops — open any saved invoice from the dropdown. The number advances only when you click New Invoice.</div>
 </div>
 
 <div class="sheet">
@@ -353,7 +370,10 @@ function collect(){
     rows
   };
 }
-function save(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(collect())); }catch(e){} }
+function save(){
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(collect())); }catch(e){}
+  cloudSave();
+}
 
 /* apply a saved state object to the form (used by autosave-load and Open file) */
 function applyState(state, {fallbackNum=true}={}){
@@ -429,18 +449,124 @@ function setBillTo(text){
 }
 
 /* ---------- new invoice ---------- */
-function newInvoice(){
-  if(!confirm('Start a new invoice? The current one will be saved to a file first, then the number advances and the line items clear.')) return;
-  saveFile(); // auto-download the current invoice so it is never lost
-  const current = parseInt(document.getElementById('fNum').textContent,10);
-  const next = (isNaN(current)? START_NUMBER : current+1);
-  localStorage.setItem(NUM_KEY, String(next));
+async function newInvoice(){
+  if(!confirm('Start a new invoice? The current one is saved first, then the number advances and the line items clear.')) return;
+
+  let next;
+  if(cloudOn){
+    await cloudSaveNow();              // make sure the current invoice is stored in the cloud
+    next = await claimNextNumber();    // atomically reserve the next shared number
+  }else{
+    saveFile();                        // offline: keep a downloaded copy so nothing is lost
+    const current = parseInt(document.getElementById('fNum').textContent,10);
+    next = (isNaN(current)? START_NUMBER : current+1);
+    localStorage.setItem(NUM_KEY, String(next));
+  }
+
   setNumber(String(next));
   document.getElementById('rows').innerHTML='';
   document.getElementById('fDate').textContent = todayStr();
   document.getElementById('fDue').textContent  = todayStr();
   addRow();
   save();
+}
+
+/* ---------- cloud sync (Firebase Firestore) ---------- */
+let db=null, cloudOn=false, unsubList=null, cloudSaveTimer=null;
+
+function cloudEnabled(){
+  const c = window.FIREBASE_CONFIG;
+  return !!(c && c.projectId && c.projectId.indexOf('YOUR_')!==0 && c.apiKey);
+}
+function setCloudStatus(text, ok){
+  const el=document.getElementById('cloudStatus');
+  if(!el) return;
+  el.textContent = text;
+  el.className = 'cloud-status ' + (ok?'ok':'off');
+}
+async function initCloud(){
+  if(!cloudEnabled()){ setCloudStatus('● Local only', false); return; }
+  try{
+    if(!firebase.apps.length) firebase.initializeApp(window.FIREBASE_CONFIG);
+    db = firebase.firestore();
+    cloudOn = true;
+    setCloudStatus('☁ Connecting…', false);
+    await ensureCounter();
+    subscribeList();
+    setCloudStatus('☁ Synced', true);
+    cloudSave(); // push whatever is currently on screen into the cloud
+  }catch(e){
+    cloudOn=false;
+    setCloudStatus('● Cloud error — local only', false);
+    console.error('Cloud init failed:', e);
+  }
+}
+async function ensureCounter(){
+  const ref = db.collection('meta').doc('counter');
+  const snap = await ref.get();
+  if(!snap.exists){
+    const start = parseInt(document.getElementById('fNum').textContent,10) || START_NUMBER;
+    await ref.set({value:start});
+  }
+}
+async function claimNextNumber(){
+  const ref = db.collection('meta').doc('counter');
+  return await db.runTransaction(async tx=>{
+    const snap = await tx.get(ref);
+    const cur  = snap.exists ? (snap.data().value||START_NUMBER-1) : (START_NUMBER-1);
+    const n = cur + 1;
+    tx.set(ref, {value:n}, {merge:true});
+    return n;
+  });
+}
+function subscribeList(){
+  if(unsubList) unsubList();
+  unsubList = db.collection('invoices').onSnapshot(qs=>{
+    const items=[];
+    qs.forEach(doc=> items.push({id:doc.id, data:doc.data()}));
+    items.sort((a,b)=> (parseInt(b.id,10)||0)-(parseInt(a.id,10)||0));
+    renderCloudList(items);
+    setCloudStatus('☁ Synced', true);
+  }, err=>{ console.error(err); setCloudStatus('● Cloud error — local only', false); });
+}
+function renderCloudList(items){
+  const sel=document.getElementById('cloudList');
+  if(!sel) return;
+  const cur=sel.value;
+  sel.innerHTML='<option value="">📋 Open saved invoice…</option>';
+  items.forEach(it=>{
+    const opt=document.createElement('option');
+    opt.value=it.id;
+    const who=String(it.data.billto||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+    opt.textContent='#'+it.id+(who?' — '+who.slice(0,20):'')+(it.data.date?'  ('+it.data.date+')':'');
+    sel.appendChild(opt);
+  });
+  sel.value=cur;
+}
+function cloudSave(){
+  if(!cloudOn) return;
+  clearTimeout(cloudSaveTimer);
+  cloudSaveTimer=setTimeout(cloudSaveNow, 800); // debounce while typing
+}
+async function cloudSaveNow(){
+  clearTimeout(cloudSaveTimer);
+  if(!cloudOn) return;
+  const state=collect();
+  if(!state.num) return;
+  try{
+    await db.collection('invoices').doc(String(state.num)).set(state);
+    setCloudStatus('☁ Synced', true);
+  }catch(e){ console.error(e); setCloudStatus('● Save failed', false); }
+}
+async function openCloudInvoice(num){
+  const sel=document.getElementById('cloudList');
+  if(!num || !cloudOn){ if(sel) sel.value=''; return; }
+  try{
+    const snap = await db.collection('invoices').doc(num).get();
+    if(!snap.exists){ alert('That invoice was not found in the cloud.'); }
+    else{ applyState(snap.data(), {fallbackNum:false}); save(); }
+  }catch(e){ console.error(e); alert('Could not open that invoice.'); }
+  if(sel) sel.value='';
 }
 
 /* default the Save-as-PDF filename to invoice-<number>.pdf */
@@ -452,7 +578,7 @@ window.addEventListener('beforeprint', ()=>{
 });
 window.addEventListener('afterprint', ()=>{ document.title = _savedTitle; });
 
-window.addEventListener('DOMContentLoaded', load);
+window.addEventListener('DOMContentLoaded', ()=>{ load(); initCloud(); });
 </script>
 </body>
 </html>
