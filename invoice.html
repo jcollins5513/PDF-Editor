@@ -223,11 +223,11 @@
 <div class="toolbar">
   <div class="num">Invoice&nbsp;# <strong id="tbNum">—</strong></div>
   <button onclick="addRow()">＋ Add Row</button>
-  <button onclick="addRow('NEW CAR PCK, CLEAN','105.00')">+ New Car Pck, Clean</button>
-  <button onclick="addRow('NEW CAR PCK','75.00')">+ New Car Pck</button>
-  <button onclick="addRow('CLEAN FOR DELIVERY','30.00')">+ Clean for Delivery</button>
-  <button onclick="addRow('DETAIL','125.00')">+ Detail</button>
-  <button onclick="addRow('BUFF &amp; POLISH')">+ Buff &amp; Polish</button>
+  <button onclick="quickItem('NEW CAR PCK, CLEAN','105.00')">+ New Car Pck, Clean</button>
+  <button onclick="quickItem('NEW CAR PCK','75.00')">+ New Car Pck</button>
+  <button onclick="quickItem('CLEAN FOR DELIVERY','30.00')">+ Clean for Delivery</button>
+  <button onclick="quickItem('DETAIL','125.00')">+ Detail</button>
+  <button onclick="quickItem('BUFF &amp; POLISH')">+ Buff &amp; Polish</button>
   <span id="customItems" style="display:contents"></span>
   <button onclick="addItemLinkPrompt()" title="Create a new item quick link (shared across desktops)">＋ Add item</button>
   <span style="width:1px;height:22px;background:#444a52;margin:0 4px"></span>
@@ -382,6 +382,8 @@ function autosize(ta){ ta.style.height='auto'; ta.style.height=ta.scrollHeight+'
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
 /* ---------- rows ---------- */
+let pendingRow = null;  // a blank row inserted via ＋, waiting to be filled by a quick link
+
 function addRow(item='', amount='', serviced='', vin='', descr='', stock='', ticket='', beforeRow=null){
   const tb = document.getElementById('rows');
   const tr = document.createElement('tr');
@@ -403,8 +405,8 @@ function addRow(item='', amount='', serviced='', vin='', descr='', stock='', tic
     </div></td>`;
   if(beforeRow){ tb.insertBefore(tr, beforeRow); } else { tb.appendChild(tr); }
 
-  tr.querySelector('.ins-btn').addEventListener('click', ()=>{ addRow('','','','','','','', tr); });
-  tr.querySelector('.del-btn').addEventListener('click', ()=>{ tr.remove(); renumber(); recalc(); save(); });
+  tr.querySelector('.ins-btn').addEventListener('click', ()=>{ pendingRow = addRow('','','','','','','', tr); });
+  tr.querySelector('.del-btn').addEventListener('click', ()=>{ if(pendingRow===tr) pendingRow=null; tr.remove(); renumber(); recalc(); save(); });
   tr.querySelectorAll('input,textarea').forEach(el=>{
     el.addEventListener('input', ()=>{ if(el.tagName==='TEXTAREA') autosize(el); recalc(); save(); });
   });
@@ -423,6 +425,32 @@ function recalc(){
   });
   document.getElementById('total').textContent = money(total);
   document.getElementById('due').textContent = money(total);
+}
+
+/* a quick-link item fills the pending ＋ row (if any), otherwise adds at the end */
+function rowIsEmpty(tr){
+  if(!tr || !tr.parentNode) return false;
+  const get = sel => (tr.querySelector(sel)?.value || '').trim();
+  return !get('.item textarea') && !get('.amt') && !get('.vin textarea') &&
+         !get('.ticket input') && !get('.stock input') && !get('.descr input');
+}
+function fillRow(tr, item, amount){
+  amount = String(amount||'');
+  const itemTa = tr.querySelector('.item textarea');
+  itemTa.value = item;
+  tr.querySelector('.amt').value = amount;
+  const descr = tr.querySelector('.descr input');
+  if(item && !descr.value.trim()) descr.value = amount;  // mirror like addRow
+  autosize(itemTa);
+  recalc(); save();
+}
+function quickItem(item='', amount=''){
+  if(pendingRow && rowIsEmpty(pendingRow)){
+    fillRow(pendingRow, item, amount);
+    pendingRow = null;
+  }else{
+    addRow(item, amount);
+  }
 }
 
 /* ---------- persistence ---------- */
@@ -626,7 +654,7 @@ function renderItemLinks(){
     const b = document.createElement('button');
     b.textContent='+ '+q.label+(q.amount ? '  $'+q.amount : '');
     b.title='Add a row: '+q.label;
-    b.addEventListener('click', ()=> addRow(q.label, q.amount||''));
+    b.addEventListener('click', ()=> quickItem(q.label, q.amount||''));
     const d = document.createElement('button');
     d.className='ql-del'; d.textContent='✕'; d.title='Remove '+q.label;
     d.addEventListener('click', e=>{ e.stopPropagation(); removeItemLink(q.id); });
