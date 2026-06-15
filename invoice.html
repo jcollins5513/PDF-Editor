@@ -382,7 +382,7 @@ function autosize(ta){ ta.style.height='auto'; ta.style.height=ta.scrollHeight+'
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
 /* ---------- rows ---------- */
-let pendingRow = null;  // a blank row inserted via ＋, waiting to be filled by a quick link
+let activeRow = null;  // the row the user last clicked/focused — quick links target this row
 
 function addRow(item='', amount='', serviced='', vin='', descr='', stock='', ticket='', beforeRow=null){
   const tb = document.getElementById('rows');
@@ -405,8 +405,12 @@ function addRow(item='', amount='', serviced='', vin='', descr='', stock='', tic
     </div></td>`;
   if(beforeRow){ tb.insertBefore(tr, beforeRow); } else { tb.appendChild(tr); }
 
-  tr.querySelector('.ins-btn').addEventListener('click', ()=>{ pendingRow = addRow('','','','','','','', tr); });
-  tr.querySelector('.del-btn').addEventListener('click', ()=>{ if(pendingRow===tr) pendingRow=null; tr.remove(); renumber(); recalc(); save(); });
+  tr.querySelector('.ins-btn').addEventListener('click', ()=>{
+    const blank = addRow('','','','','','','', tr);
+    activeRow = blank;
+    blank.querySelector('.item textarea').focus();
+  });
+  tr.querySelector('.del-btn').addEventListener('click', ()=>{ if(activeRow===tr) activeRow=null; tr.remove(); renumber(); recalc(); save(); });
   tr.querySelectorAll('input,textarea').forEach(el=>{
     el.addEventListener('input', ()=>{ if(el.tagName==='TEXTAREA') autosize(el); recalc(); save(); });
   });
@@ -445,11 +449,13 @@ function fillRow(tr, item, amount){
   recalc(); save();
 }
 function quickItem(item='', amount=''){
-  if(pendingRow && rowIsEmpty(pendingRow)){
-    fillRow(pendingRow, item, amount);
-    pendingRow = null;
+  const target = (activeRow && activeRow.parentNode) ? activeRow : null;
+  if(target && rowIsEmpty(target)){
+    fillRow(target, item, amount);          // clicked an empty row -> fill it in place
+  }else if(target){
+    activeRow = addRow(item, amount, '','','','','', target.nextSibling); // insert just below the clicked row
   }else{
-    addRow(item, amount);
+    activeRow = addRow(item, amount);        // nothing selected -> add at the end
   }
 }
 
@@ -497,6 +503,7 @@ function applyState(state, {fallbackNum=true}={}){
   document.querySelector('.billto .body').innerHTML =
      (state && state.billto) || document.querySelector('.billto .body').innerHTML;
 
+  activeRow = null;
   document.getElementById('rows').innerHTML='';
   if(state && state.rows && state.rows.length){
     state.rows.forEach(r=>addRow(r.item, r.amount, r.serviced, r.vin, r.descr, r.stock, r.ticket));
@@ -514,6 +521,12 @@ function load(){
   ['fDate','fDue'].forEach(id=>document.getElementById(id).addEventListener('input', save));
   document.querySelector('.company').addEventListener('input', save);
   document.querySelector('.billto .body').addEventListener('input', save);
+
+  // clicking/typing in any row marks it as the target for the next quick link
+  const rowsTb = document.getElementById('rows');
+  const markActive = e=>{ const tr=e.target.closest('tr'); if(tr && tr.parentNode===rowsTb) activeRow=tr; };
+  rowsTb.addEventListener('focusin', markActive);
+  rowsTb.addEventListener('click', e=>{ if(e.target.closest('.row-tools')) return; markActive(e); });
 }
 
 /* ---------- per-invoice files on the local machine ---------- */
