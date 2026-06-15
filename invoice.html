@@ -283,6 +283,15 @@
   </div>
 </div>
 
+<!-- dropdown choices for each column (item list is curated; the rest learn what you type) -->
+<datalist id="dl-item"></datalist>
+<datalist id="dl-serviced"></datalist>
+<datalist id="dl-ticket"></datalist>
+<datalist id="dl-stock"></datalist>
+<datalist id="dl-vin"></datalist>
+<datalist id="dl-descr"></datalist>
+<datalist id="dl-amount"></datalist>
+
 <div class="sheet">
  <table class="layout">
 
@@ -381,6 +390,57 @@ function money(n){
 function autosize(ta){ ta.style.height='auto'; ta.style.height=ta.scrollHeight+'px'; }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
+/* ---------- column dropdown choices ---------- */
+// the built-in items match the toolbar quick buttons; custom ones come from itemLinks
+const BASE_ITEMS = [
+  {label:'NEW CAR PCK, CLEAN', amount:'105.00'},
+  {label:'NEW CAR PCK',        amount:'75.00'},
+  {label:'CLEAN FOR DELIVERY', amount:'30.00'},
+  {label:'DETAIL',             amount:'125.00'},
+  {label:'BUFF & POLISH',      amount:''}
+];
+function allItems(){
+  return BASE_ITEMS.concat((typeof itemLinks!=='undefined'?itemLinks:[]).map(q=>({label:q.label, amount:q.amount||''})));
+}
+function itemAmountFor(label){
+  const m = allItems().find(x=>x.label.toLowerCase()===String(label||'').trim().toLowerCase());
+  return m ? m.amount : null;
+}
+function fillDatalist(id, values){
+  const dl=document.getElementById(id);
+  if(!dl) return;
+  dl.innerHTML='';
+  values.forEach(v=>{ if(v){ const o=document.createElement('option'); o.value=v; dl.appendChild(o); } });
+}
+function updateItemDatalist(){ fillDatalist('dl-item', allItems().map(x=>x.label)); }
+
+// the other columns "learn" the values you type, remembered on this machine
+const COLMEM_KEY = 'wt_colmem';
+const MEM_COLS = ['serviced','ticket','stock','vin','descr','amount'];
+let colMem = {};
+function loadColMem(){
+  try{ colMem = JSON.parse(localStorage.getItem(COLMEM_KEY)) || {}; }catch(e){ colMem={}; }
+  MEM_COLS.forEach(c=>{ if(!Array.isArray(colMem[c])) colMem[c]=[]; });
+}
+function rememberValue(col, val){
+  if(!MEM_COLS.includes(col)) return;
+  val=String(val||'').trim();
+  if(!val || colMem[col].includes(val)) return;
+  colMem[col].unshift(val);
+  if(colMem[col].length>50) colMem[col].length=50;
+  try{ localStorage.setItem(COLMEM_KEY, JSON.stringify(colMem)); }catch(e){}
+  fillDatalist('dl-'+col, colMem[col]);
+}
+function refreshColDatalists(){ MEM_COLS.forEach(c=> fillDatalist('dl-'+c, colMem[c]||[])); }
+function learnFromRows(){
+  document.querySelectorAll('#rows tr').forEach(tr=>{
+    MEM_COLS.forEach(col=>{
+      const el = col==='amount' ? tr.querySelector('.amt') : tr.querySelector('.'+col+' input');
+      if(el) rememberValue(col, el.value);
+    });
+  });
+}
+
 /* ---------- rows ---------- */
 let activeRow = null;  // the row the user last clicked/focused — quick links target this row
 
@@ -392,13 +452,13 @@ function addRow(item='', amount='', serviced='', vin='', descr='', stock='', tic
   if(item && !descr) descr = amount; // mirror like the template
   tr.innerHTML = `
     <td class="rownum"></td>
-    <td class="serviced cell"><input value="${esc(serviced)}"></td>
-    <td class="ticket cell"><input value="${esc(ticket)}"></td>
-    <td class="stock cell"><input value="${esc(stock)}"></td>
-    <td class="vin cell"><textarea rows="1">${esc(vin)}</textarea></td>
-    <td class="item cell"><textarea rows="1">${esc(item)}</textarea></td>
-    <td class="descr cell"><input value="${esc(descr)}"></td>
-    <td class="amount cell"><input class="amt" value="${esc(amount)}" inputmode="decimal"></td>
+    <td class="serviced cell"><input list="dl-serviced" value="${esc(serviced)}"></td>
+    <td class="ticket cell"><input list="dl-ticket" value="${esc(ticket)}"></td>
+    <td class="stock cell"><input list="dl-stock" value="${esc(stock)}"></td>
+    <td class="vin cell"><input list="dl-vin" value="${esc(vin)}"></td>
+    <td class="item cell"><input list="dl-item" value="${esc(item)}"></td>
+    <td class="descr cell"><input list="dl-descr" value="${esc(descr)}"></td>
+    <td class="amount cell"><input class="amt" list="dl-amount" value="${esc(amount)}" inputmode="decimal"></td>
     <td class="col-del"><div class="row-tools">
       <button class="ins-btn" title="Insert a blank row above this one">＋</button>
       <button class="del-btn" title="Delete row">✕</button>
@@ -408,13 +468,33 @@ function addRow(item='', amount='', serviced='', vin='', descr='', stock='', tic
   tr.querySelector('.ins-btn').addEventListener('click', ()=>{
     const blank = addRow('','','','','','','', tr);
     activeRow = blank;
-    blank.querySelector('.item textarea').focus();
+    blank.querySelector('.item input').focus();
   });
   tr.querySelector('.del-btn').addEventListener('click', ()=>{ if(activeRow===tr) activeRow=null; tr.remove(); renumber(); recalc(); save(); });
-  tr.querySelectorAll('input,textarea').forEach(el=>{
-    el.addEventListener('input', ()=>{ if(el.tagName==='TEXTAREA') autosize(el); recalc(); save(); });
+
+  const cells = {
+    serviced: tr.querySelector('.serviced input'),
+    ticket:   tr.querySelector('.ticket input'),
+    stock:    tr.querySelector('.stock input'),
+    vin:      tr.querySelector('.vin input'),
+    item:     tr.querySelector('.item input'),
+    descr:    tr.querySelector('.descr input'),
+    amount:   tr.querySelector('.amt')
+  };
+  Object.entries(cells).forEach(([col, el])=>{
+    el.addEventListener('input', ()=>{ recalc(); save(); });
+    el.addEventListener('change', ()=> rememberValue(col, el.value));
   });
-  tr.querySelectorAll('textarea').forEach(autosize);
+  // picking an item from its dropdown auto-fills the amount (and mirrors to description)
+  cells.item.addEventListener('change', ()=>{
+    const amt = itemAmountFor(cells.item.value);
+    if(amt && !cells.amount.value.trim()){
+      cells.amount.value = amt;
+      if(!cells.descr.value.trim()) cells.descr.value = amt;
+      recalc(); save();
+    }
+  });
+
   renumber(); recalc(); save();
   return tr;
 }
@@ -435,17 +515,15 @@ function recalc(){
 function rowIsEmpty(tr){
   if(!tr || !tr.parentNode) return false;
   const get = sel => (tr.querySelector(sel)?.value || '').trim();
-  return !get('.item textarea') && !get('.amt') && !get('.vin textarea') &&
+  return !get('.item input') && !get('.amt') && !get('.vin input') &&
          !get('.ticket input') && !get('.stock input') && !get('.descr input');
 }
 function fillRow(tr, item, amount){
   amount = String(amount||'');
-  const itemTa = tr.querySelector('.item textarea');
-  itemTa.value = item;
+  tr.querySelector('.item input').value = item;
   tr.querySelector('.amt').value = amount;
   const descr = tr.querySelector('.descr input');
   if(item && !descr.value.trim()) descr.value = amount;  // mirror like addRow
-  autosize(itemTa);
   recalc(); save();
 }
 function quickItem(item='', amount=''){
@@ -467,8 +545,8 @@ function collect(){
       serviced: tr.querySelector('.serviced input').value,
       ticket:   tr.querySelector('.ticket input').value,
       stock:    tr.querySelector('.stock input').value,
-      vin:      tr.querySelector('.vin textarea').value,
-      item:     tr.querySelector('.item textarea').value,
+      vin:      tr.querySelector('.vin input').value,
+      item:     tr.querySelector('.item input').value,
       descr:    tr.querySelector('.descr input').value,
       amount:   tr.querySelector('.amt').value
     });
@@ -510,14 +588,16 @@ function applyState(state, {fallbackNum=true}={}){
   }else{
     addRow('NEW CAR PCK, CLEAN','105.00');
   }
+  learnFromRows();   // feed the loaded values into the per-column dropdowns
 }
 
 function load(){
   let state=null;
   try{ state = JSON.parse(localStorage.getItem(STORE_KEY)); }catch(e){}
+  loadColMem(); refreshColDatalists();    // restore the per-column dropdown choices
   applyState(state);
   loadLocalLinks(); renderQuickLinks();   // show saved quick links right away (cloud refreshes them)
-  loadLocalItems(); renderItemLinks();
+  loadLocalItems(); renderItemLinks();    // renderItemLinks also refreshes the item dropdown
   ['fDate','fDue'].forEach(id=>document.getElementById(id).addEventListener('input', save));
   document.querySelector('.company').addEventListener('input', save);
   document.querySelector('.billto .body').addEventListener('input', save);
@@ -658,6 +738,7 @@ function persistItems(){
   }
 }
 function renderItemLinks(){
+  updateItemDatalist();   // keep the Item-column dropdown in sync with the buttons
   const host = document.getElementById('customItems');
   if(!host) return;
   host.innerHTML='';
