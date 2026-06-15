@@ -19,10 +19,10 @@
 // ============================================================================
 
 window.FIREBASE_CONFIG = {
-  apiKey:            "YOUR_API_KEY",
-  authDomain:        "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId:         "YOUR_PROJECT_ID",
-  storageBucket:     "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId:             "YOUR_APP_ID"
+  apiKey:            "AIzaSyCWFZJM8Y5yXrOc8GzsPd8PQGbm7UvL2UI",
+  authDomain:        "custom-search-1702893463998.firebaseapp.com",
+  projectId:         "custom-search-1702893463998",
+  storageBucket:     "custom-search-1702893463998.firebasestorage.app",
+  messagingSenderId: "391995761636",
+  appId:             "1:391995761636:web:871bf507b1c479b0ba5df1"
 };
