@@ -414,13 +414,19 @@ function fillDatalist(id, values){
 }
 function updateItemDatalist(){ fillDatalist('dl-item', allItems().map(x=>x.label)); }
 
-// the other columns "learn" the values you type, remembered on this machine
+// the other columns "learn" the values you type — cached locally, synced across desktops
 const COLMEM_KEY = 'wt_colmem';
 const MEM_COLS = ['serviced','ticket','stock','vin','descr','amount'];
 let colMem = {};
+let unsubColMem = null, colMemTimer = null;
 function loadColMem(){
   try{ colMem = JSON.parse(localStorage.getItem(COLMEM_KEY)) || {}; }catch(e){ colMem={}; }
   MEM_COLS.forEach(c=>{ if(!Array.isArray(colMem[c])) colMem[c]=[]; });
+}
+function dedupeList(arr){
+  const seen=new Set(), out=[];
+  arr.forEach(v=>{ v=String(v||'').trim(); if(v && !seen.has(v)){ seen.add(v); out.push(v); } });
+  return out;
 }
 function rememberValue(col, val){
   if(!MEM_COLS.includes(col)) return;
@@ -430,8 +436,37 @@ function rememberValue(col, val){
   if(colMem[col].length>50) colMem[col].length=50;
   try{ localStorage.setItem(COLMEM_KEY, JSON.stringify(colMem)); }catch(e){}
   fillDatalist('dl-'+col, colMem[col]);
+  scheduleColMemPush();
 }
 function refreshColDatalists(){ MEM_COLS.forEach(c=> fillDatalist('dl-'+c, colMem[c]||[])); }
+
+/* keep the column suggestions in sync across desktops via meta/columnmemory */
+function pushColMem(){
+  if(cloudOn){ db.collection('meta').doc('columnmemory').set({cols:colMem}).catch(e=>console.error(e)); }
+}
+function scheduleColMemPush(){
+  if(!cloudOn) return;
+  clearTimeout(colMemTimer);
+  colMemTimer = setTimeout(pushColMem, 1000);   // debounce bursts of new values
+}
+function subscribeColMem(){
+  if(unsubColMem) unsubColMem();
+  unsubColMem = db.collection('meta').doc('columnmemory').onSnapshot(snap=>{
+    const cloud = (snap.exists && snap.data().cols) ? snap.data().cols : {};
+    let localChanged=false, cloudMissing=false;
+    MEM_COLS.forEach(col=>{
+      const cloudList = Array.isArray(cloud[col]) ? cloud[col] : [];
+      const merged = dedupeList(cloudList.concat(colMem[col]||[])).slice(0,50);  // union, never lose either side
+      if(JSON.stringify(merged)!==JSON.stringify(colMem[col]||[])){ colMem[col]=merged; localChanged=true; }
+      if(JSON.stringify(merged)!==JSON.stringify(cloudList)) cloudMissing=true;
+    });
+    if(localChanged){
+      try{ localStorage.setItem(COLMEM_KEY, JSON.stringify(colMem)); }catch(e){}
+      refreshColDatalists();
+    }
+    if(cloudMissing) pushColMem();   // propagate values the cloud didn't have yet
+  }, err=>console.error(err));
+}
 function learnFromRows(){
   document.querySelectorAll('#rows tr').forEach(tr=>{
     MEM_COLS.forEach(col=>{
@@ -845,6 +880,7 @@ async function initCloud(){
     subscribeList();
     subscribeLinks();   // keep custom quick links in sync across desktops
     subscribeItems();
+    subscribeColMem();  // keep per-column dropdown suggestions in sync
     setCloudStatus('☁ Synced', true);
     cloudSave(); // push whatever is currently on screen into the cloud
   }catch(e){
