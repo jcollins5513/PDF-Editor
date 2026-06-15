@@ -164,6 +164,7 @@
     .sheet{box-shadow:none;margin:0;width:auto;min-height:auto;padding:0;}
     .col-del,.del-btn{visibility:hidden;}
     .add-row-wrap{display:none !important;}
+    .ql-modal{display:none !important;}
     .rownum{background:#fff;}
     thead.run-head{display:table-header-group;}
     tfoot.run-foot{display:table-footer-group;}
@@ -180,6 +181,36 @@
     font-size:13px;font-weight:600;padding:8px 8px;border-radius:6px;border:0;
     background:#33383f;color:#fff;cursor:pointer;max-width:220px;
   }
+  /* custom Bill-To quick links */
+  .ql{display:inline-flex;}
+  .ql > button{border-radius:0;}
+  .ql > button:first-child{border-top-left-radius:6px;border-bottom-left-radius:6px;}
+  .ql-del{
+    background:#5a3030;color:#ffb4b4;padding:8px 8px;font-size:11px;font-weight:700;
+    border-top-right-radius:6px;border-bottom-right-radius:6px;
+  }
+  .ql-del:hover{background:#7a3a3a;}
+  /* add-quick-link dialog */
+  .ql-modal{
+    position:fixed;inset:0;background:rgba(0,0,0,.5);
+    display:flex;align-items:center;justify-content:center;z-index:50;
+  }
+  .ql-card{
+    background:#fff;color:#111;border-radius:10px;padding:20px 22px;width:380px;max-width:92vw;
+    box-shadow:0 10px 40px rgba(0,0,0,.35);
+  }
+  .ql-card h3{margin:0 0 14px;font-size:17px;}
+  .ql-card label{display:block;font-size:13px;font-weight:600;margin-bottom:14px;color:#333;}
+  .ql-card input,.ql-card textarea{
+    width:100%;margin-top:5px;padding:8px;border:1px solid #ccc;border-radius:6px;
+    font:inherit;font-weight:400;resize:vertical;
+  }
+  .ql-actions{display:flex;justify-content:flex-end;gap:8px;}
+  .ql-actions button{
+    font-size:13px;font-weight:600;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;
+    background:#e6e8eb;color:#222;
+  }
+  .ql-actions button.primary{background:var(--accent);color:#fff;}
 </style>
 <!-- Firebase SDK (compat build works from a single static HTML file) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -201,6 +232,8 @@
   <button onclick="setBillTo('BENTLEY HYUNDAI\n3805 University Dr.\nHuntsville, AL. 35816')">🏢 Bentley Hyundai</button>
   <button onclick="setBillTo('CREDIT NOW\n1220C N. Memorial Parkway\nHuntsville, AL. 35801')">🏢 Credit Now</button>
   <button onclick="setBillTo('BENTLEY BUICK GMC\n2120 Drake Ave SW\nHuntsville, AL 35805')">🏢 Bentley Buick GMC</button>
+  <span id="customLinks" style="display:contents"></span>
+  <button onclick="addQuickLinkPrompt()" title="Create a new Bill To quick link (shared across desktops)">＋ Add store</button>
   <div class="spacer"></div>
   <select id="cloudList" onchange="openCloudInvoice(this.value)" title="Open a saved invoice from the cloud">
     <option value="">📋 Open saved invoice…</option>
@@ -212,6 +245,23 @@
   <button class="primary" onclick="window.print()">🖶 Print / Save PDF</button>
   <input type="file" id="openInput" accept=".json,application/json" style="display:none" onchange="openFile(this)">
   <div class="hint">Click any field to edit. Amounts total automatically. When cloud sync is on, every invoice and the next number are shared live across all desktops — open any saved invoice from the dropdown. The number advances only when you click New Invoice.</div>
+</div>
+
+<!-- New quick-link dialog (screen only) -->
+<div id="qlModal" class="ql-modal" style="display:none">
+  <div class="ql-card">
+    <h3>New Bill To quick link</h3>
+    <label>Button name
+      <input id="qlName" placeholder="e.g. Bentley Buick GMC">
+    </label>
+    <label>Address (exactly as it should appear in Bill To)
+      <textarea id="qlAddr" rows="4" placeholder="BENTLEY BUICK GMC&#10;2120 Drake Ave SW&#10;Huntsville, AL 35805"></textarea>
+    </label>
+    <div class="ql-actions">
+      <button onclick="closeQuickLinkModal()">Cancel</button>
+      <button class="primary" onclick="saveQuickLinkModal()">Save quick link</button>
+    </div>
+  </div>
 </div>
 
 <div class="sheet">
@@ -412,6 +462,7 @@ function load(){
   let state=null;
   try{ state = JSON.parse(localStorage.getItem(STORE_KEY)); }catch(e){}
   applyState(state);
+  loadLocalLinks(); renderQuickLinks();   // show saved quick links right away (cloud refreshes them)
   ['fDate','fDue'].forEach(id=>document.getElementById(id).addEventListener('input', save));
   document.querySelector('.company').addEventListener('input', save);
   document.querySelector('.billto .body').addEventListener('input', save);
@@ -455,6 +506,79 @@ function setBillTo(text){
   const body = document.querySelector('.billto .body');
   body.textContent = text;   // textContent keeps the line breaks as real newlines
   save();
+}
+
+/* ---------- custom Bill-To quick links (shared across desktops) ---------- */
+const LINKS_KEY = 'wt_quicklinks';
+let quickLinks = [];           // [{id, label, address}]
+let unsubLinks = null;
+
+function loadLocalLinks(){
+  try{ quickLinks = JSON.parse(localStorage.getItem(LINKS_KEY)) || []; }
+  catch(e){ quickLinks = []; }
+}
+function persistLinks(){
+  try{ localStorage.setItem(LINKS_KEY, JSON.stringify(quickLinks)); }catch(e){}
+  if(cloudOn){
+    db.collection('meta').doc('quicklinks').set({items:quickLinks}).catch(e=>console.error(e));
+  }
+}
+function renderQuickLinks(){
+  const host = document.getElementById('customLinks');
+  if(!host) return;
+  host.innerHTML='';
+  quickLinks.forEach(q=>{
+    const wrap = document.createElement('span');
+    wrap.className='ql';
+    const b = document.createElement('button');
+    b.textContent='🏢 '+q.label;
+    b.title='Bill To: '+q.label;
+    b.addEventListener('click', ()=> setBillTo(q.address));
+    const d = document.createElement('button');
+    d.className='ql-del'; d.textContent='✕'; d.title='Remove '+q.label;
+    d.addEventListener('click', e=>{ e.stopPropagation(); removeQuickLink(q.id); });
+    wrap.appendChild(b); wrap.appendChild(d);
+    host.appendChild(wrap);
+  });
+}
+function addQuickLink(label, address){
+  label=String(label||'').trim(); address=String(address||'').trim();
+  if(!label || !address) return;
+  const id = Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36);
+  quickLinks.push({id, label, address});
+  persistLinks(); renderQuickLinks();
+}
+function removeQuickLink(id){
+  const q = quickLinks.find(x=>x.id===id);
+  if(q && !confirm('Remove the "'+q.label+'" quick link? (It will disappear on all desktops.)')) return;
+  quickLinks = quickLinks.filter(x=>x.id!==id);
+  persistLinks(); renderQuickLinks();
+}
+function subscribeLinks(){
+  if(unsubLinks) unsubLinks();
+  unsubLinks = db.collection('meta').doc('quicklinks').onSnapshot(snap=>{
+    if(snap.exists && Array.isArray(snap.data().items)){
+      quickLinks = snap.data().items;
+      try{ localStorage.setItem(LINKS_KEY, JSON.stringify(quickLinks)); }catch(e){}
+      renderQuickLinks();
+    }
+  }, err=>console.error(err));
+}
+
+/* the add-quick-link dialog */
+function addQuickLinkPrompt(){
+  document.getElementById('qlName').value='';
+  document.getElementById('qlAddr').value='';
+  document.getElementById('qlModal').style.display='flex';
+  document.getElementById('qlName').focus();
+}
+function closeQuickLinkModal(){ document.getElementById('qlModal').style.display='none'; }
+function saveQuickLinkModal(){
+  const name = document.getElementById('qlName').value;
+  const addr = document.getElementById('qlAddr').value;
+  if(!name.trim() || !addr.trim()){ alert('Please enter both a button name and an address.'); return; }
+  addQuickLink(name, addr);
+  closeQuickLinkModal();
 }
 
 /* ---------- new invoice ---------- */
@@ -502,6 +626,7 @@ async function initCloud(){
     setCloudStatus('☁ Connecting…', false);
     await ensureCounter();
     subscribeList();
+    subscribeLinks();   // keep custom quick links in sync across desktops
     setCloudStatus('☁ Synced', true);
     cloudSave(); // push whatever is currently on screen into the cloud
   }catch(e){
