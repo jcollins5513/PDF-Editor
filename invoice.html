@@ -489,8 +489,11 @@ function dedupeList(arr){
 function rememberValue(col, val){
   if(!MEM_COLS.includes(col)) return;
   val=String(val||'').trim();
-  if(!val || colMem[col].includes(val)) return;
-  colMem[col].unshift(val);
+  if(!val) return;
+  const idx = colMem[col].indexOf(val);
+  if(idx === 0) return;           // already the most-recent entry, nothing to do
+  if(idx > 0) colMem[col].splice(idx, 1);  // remove from wherever it sits
+  colMem[col].unshift(val);       // promote to front (MRU order)
   if(colMem[col].length>50) colMem[col].length=50;
   try{ localStorage.setItem(COLMEM_KEY, JSON.stringify(colMem)); }catch(e){}
   fillDatalist('dl-'+col, colMem[col]);
@@ -541,7 +544,7 @@ function addRow(item='', amount='', serviced='', vin='', descr='', stock='', tic
   const tb = document.getElementById('rows');
   const tr = document.createElement('tr');
   tr.className='item-row';
-  if(!serviced) serviced = todayStr();
+  if(!serviced) serviced = (colMem.serviced && colMem.serviced[0]) || todayStr();
   if(item && !descr) descr = amount; // mirror like the template
   tr.innerHTML = `
     <td class="rownum"></td>
@@ -680,7 +683,7 @@ function applyState(state, {fallbackNum=true}={}){
   if(state && state.rows && state.rows.length){
     state.rows.forEach(r=>addRow(r.item, r.amount, r.serviced, r.vin, r.descr, r.stock, r.ticket));
   }else{
-    addRow('NEW CAR PCK, CLEAN','105.00');
+    activeRow = addRow();   // start with one empty row ready to be filled
   }
   learnFromRows();   // feed the loaded values into the per-column dropdowns
 }
